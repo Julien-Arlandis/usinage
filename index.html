@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recouvrement Hémisphérique - Échelle Fixe Strict</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 20px;
+            background-color: #f4f7f6;
+            color: #333;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h2 {
+            color: #2c3e50;
+            margin-top: 0;
+        }
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            background: #ecf0f1;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+        }
+        label {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        input[type="range"] {
+            width: 100%;
+        }
+        .results {
+            background: #2c3e50;
+            color: white;
+            padding: 15px;
+            border-radius: 6px;
+            font-size: 1.2em;
+            margin-bottom: 20px;
+        }
+        .results span {
+            font-weight: bold;
+            color: #e74c3c;
+        }
+        canvas {
+            border: 1px solid #bdc3c7;
+            background: #ffffff;
+            width: 100%;
+            height: 400px;
+            display: block;
+            border-radius: 4px;
+        }
+        .math-note {
+            margin-top: 15px;
+            font-size: 0.95em;
+            color: #2c3e50;
+            border-left: 4px solid #3498db;
+            padding-left: 15px;
+            background: #eef2f5;
+            padding-top: 10px;
+            padding-bottom: 10px;
+        }
+        .math {
+            font-family: "Courier New", Courier, monospace;
+            font-weight: bold;
+            background: #e0e6ed;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Simulation du profil z(x) (Échelle et Rayon fixes)</h2>
+    
+    <div class="controls">
+        <div class="control-group">
+            <label for="rangeR">Rayon de l'outil R : <span id="valR">1.0</span> mm</label>
+            <input type="range" id="rangeR" min="1.0" max="10.0" value="5.0" step="0.1">
+        </div>
+        <div class="control-group">
+            <label for="rangeA">Pas d'usinage a : <span id="valA">2.0</span> mm <span id="valAPercent" style="color:#7f8c8d; font-weight:normal;">(40.0%)</span></label>
+            <input type="range" id="rangeA" min="0.05" max="19.9" value="2.0" step="0.05">
+        </div>
+    </div>
+
+    <div class="results">
+        Rapport de rugosité relative (zmax - zmin) / R = <span id="resultRatio">0.0000</span>
+    </div>
+
+    <canvas id="simCanvas" width="1000" height="400"></canvas>
+
+    <div class="math-note">
+        <strong>Formules géométriques appliquées :</strong><br><br>
+        • Hauteur de crête (Rugosité totale) : <span class="math">Rt = zmax - zmin = R - √(R² - (a/2)²)</span> avec <span class="math">zmin = 0</span>.<br>
+        • Rapport demandé : <span class="math">(zmax - zmin) / R = 1 - √(1 - (a / 2R)²)</span>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('simCanvas');
+    const ctx = canvas.getContext('2d');
+
+    const rangeR = document.getElementById('rangeR');
+    const rangeA = document.getElementById('rangeA');
+    
+    const valR = document.getElementById('valR');
+    const valA = document.getElementById('valA');
+    const valAPercent = document.getElementById('valAPercent');
+    const resultRatio = document.getElementById('resultRatio');
+
+    // Échelle constante globale : 1 mm réel vaut TOUJOURS 60 pixels à l'écran.
+    // Cela garantit que le rayon à l'écran reste strictement proportionnel à sa valeur en mm.
+    const scale = 60; 
+
+    function draw() {
+        const R = parseFloat(rangeR.value);
+        let a = parseFloat(rangeA.value);
+
+        // Contrainte géométrique stricte : le pas 'a' ne peut pas dépasser 2*R
+        const maxAllowedA = 2 * R - 0.01;
+        
+        // On ajuste dynamiquement la borne max du slider 'a' pour suivre les changements de R
+        rangeA.max = (2 * R - 0.01).toFixed(2);
+        
+        if (a >= 2 * R) {
+            a = maxAllowedA;
+            rangeA.value = a;
+        }
+
+        // Calcul des métriques
+        const aPercent = (a / R) * 100;
+        valR.innerText = R.toFixed(1);
+        valA.innerText = a.toFixed(2);
+        valAPercent.innerText = `(${aPercent.toFixed(1)}% de R)`;
+
+        const zmin = 0;
+        const zmax = R - Math.sqrt(R * R - (a / 2) * (a / 2));
+        const ratio = (zmax - zmin) / R;
+        resultRatio.innerText = ratio.toFixed(4);
+
+        // --- DESSIN ---
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const width = canvas.width;
+        const height = canvas.height;
+        
+        const offsetX = width / 2;
+        const offsetY = height - 50; // Alignement du fond des vagues en bas du canvas
+
+        // Calcul dynamique du nombre de cercles nécessaires pour saturer la largeur de l'écran
+        const numPasses = Math.ceil((width / 2) / (a * scale)) + 2;
+        
+        // 1. Dessiner les outils hémisphériques (en bleu très léger)
+        ctx.lineWidth = 1;
+        for (let i = -numPasses; i <= numPasses; i++) {
+            const centerX = offsetX + i * a * scale;
+            const centerY = offsetY - R * scale; 
+            
+            ctx.beginPath();
+            ctx.strokeStyle = 'rgba(52, 152, 219, 0.15)';
+            ctx.fillStyle = 'rgba(52, 152, 219, 0.01)';
+            ctx.arc(centerX, centerY, R * scale, 0, Math.PI, false);
+            ctx.stroke();
+            ctx.fill();
+        }
+
+        // 2. Dessiner la ligne ondulée usinée z(x) fine
+        ctx.lineWidth = 1.2; // Épaisseur réduite
+        ctx.strokeStyle = '#e74c3c'; // Ligne rouge
+        ctx.beginPath();
+
+        let first = true;
+
+        for (let px = 0; px < width; px++) {
+            const x = (px - offsetX) / scale;
+            let minZ = Infinity;
+
+            for (let i = -numPasses - 1; i <= numPasses + 1; i++) {
+                const centerXi = i * a;
+                const dx = x - centerXi;
+                
+                if (Math.abs(dx) <= R) {
+                    const z = R - Math.sqrt(R * R - dx * dx);
+                    if (z < minZ) {
+                        minZ = z;
+                    }
+                }
+            }
+
+            if (minZ !== Infinity) {
+                const py = offsetY - minZ * scale;
+                if (first) {
+                    ctx.moveTo(px, py);
+                    first = false;
+                } else {
+                    ctx.lineTo(px, py);
+                }
+            }
+        }
+        ctx.stroke();
+
+        // 3. Dessiner la cote géométrique (uniquement sur le motif à droite du centre pour la clarté)
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = '#27ae60';
+        ctx.fillStyle = '#27ae60';
+        ctx.font = '12px Arial';
+        ctx.setLineDash([3, 3]);
+
+        const pzmin = offsetY - zmin * scale;
+        const pzmax = offsetY - zmax * scale;
+        const measureX = offsetX + (a / 2) * scale + 15;
+
+        ctx.beginPath();
+        ctx.moveTo(offsetX, pzmin);
+        ctx.lineTo(measureX, pzmin);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(offsetX + (a / 2) * scale, pzmax);
+        ctx.lineTo(measureX, pzmax);
+        ctx.stroke();
+
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(measureX - 5, pzmin);
+        ctx.lineTo(measureX - 5, pzmax);
+        ctx.stroke();
+        
+        ctx.fillText(`Rt = ${(zmax-zmin).toFixed(3)} mm`, measureX + 5, (pzmin + pzmax) / 2 + 4);
+    }
+
+    rangeR.addEventListener('input', draw);
+    rangeA.addEventListener('input', draw);
+
+    // Initialisation par défaut équilibrée
+    draw();
+</script>
+
+</body>
+</html>
